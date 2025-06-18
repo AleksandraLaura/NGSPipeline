@@ -6,9 +6,6 @@ Hej!
 
 Her finder du dokumentation for mit arbejde ved Retsgenetisk Afdeling, Københavns Universitet.
 
-Alle relevante filer er placeret i min brugermappe under følgende sti:  
-/mnt/ngs/projects/wgs_pipeline_testing_6180/users/wmj412/20250523_summary_script_pipeline
-
 Der er to hovedmapper:
 
 1) summary_python_script  
@@ -58,9 +55,6 @@ Det kan være relevant at se nærmere på Haplocheck og Haplocart til estimering
 Hi there!
 
 This document contains an overview of my work at the Department of Forensic Medicine, University of Copenhagen.
-
-All relevant files can be found in my user directory at:  
-/mnt/ngs/projects/wgs_pipeline_testing_6180/users/wmj412/20250523_summary_script_pipeline
 
 There are two main folders:
 
