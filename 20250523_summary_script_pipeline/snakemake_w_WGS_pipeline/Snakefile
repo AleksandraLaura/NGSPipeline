@@ -1,0 +1,377 @@
+# by: Aleksandra Laura Pach (aleksandralaurapach@gmail.com)
+# Snakefile
+
+############################################ NOTE! #############################################
+# I didn’t get around to adding the amount of cores and memory for each analysis.
+# Implementing that, along with possible log files, would be a good idea.
+# See more about this in the Snakemake documentation.
+# https://snakemake.readthedocs.io/en/stable/snakefiles/rules.html#threads
+################################################################################################
+
+# Path to config.yaml file
+configfile: "config.yaml"
+
+# Stuff to get out from the config file:
+SAMPLES = config["samples"]
+OUTDIR = config["output_dir"].rstrip("/")
+LANES = config["lanes"]
+SAMPLE_IDS = {sample: f"{sample}_S{i+1}" for i, sample in enumerate(SAMPLES)}
+SAMPLE_OUTDIRS = {sample: f"{OUTDIR}/{sample}" for sample in SAMPLES}
+
+
+# Coding in the final outputs (dependent on the config.yaml)
+final_outputs = [
+    f"{SAMPLE_OUTDIRS[sample]}/{sample}.merged.sorted.markDup.sorted.recalibrated.bam"
+    for sample in SAMPLES
+]
+
+if config.get("get_empop_input", False):
+    mt_cov_threshold = config["mt_cov_threshold"]
+    final_outputs += [
+        f"{SAMPLE_OUTDIRS[sample]}/{sample}.chrM_{mt_cov_threshold}.EMPOP.txt"
+        for sample in SAMPLES
+    ]
+
+if config.get("run_yleaf", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/yleaf_output/yleaf.done" for sample in SAMPLES]
+
+if config.get("extract_AIMs", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.AIMs.vcf" for sample in SAMPLES]
+
+if config.get("extract_HIrisPlexS", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.HIrisPlexS.csv" for sample in SAMPLES]
+
+if config.get("extract_STRs", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/strinngs_output" for sample in SAMPLES]
+
+if config.get("library_complexity_picard", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}_lib_complexity_picard.txt" for sample in SAMPLES]
+
+if config.get("library_complexity_preseq", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.preseq_yield_estimates.txt" for sample in SAMPLES]
+
+if config.get("library_complexity_custom", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.custom_yield_estimates.txt" for sample in SAMPLES]
+
+if config.get("sex_determination_skoglund", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.skoglund_sex_det.txt" for sample in SAMPLES]
+
+if config.get("sex_determination_anastasiadou", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.anastasiadou_sex_det.txt" for sample in SAMPLES]
+
+if config.get("run_demixtify", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/{sample}.demixtify.tsv" for sample in SAMPLES]
+
+if config.get("run_mapdamage", False):
+    final_outputs += [f"{SAMPLE_OUTDIRS[sample]}/mapdamage_output/mapdamage.done" for sample in SAMPLES]
+
+
+rule all:
+    input:
+        final_outputs,
+        expand("logs/{sample}.biss_pipeline.done", sample=SAMPLES)
+
+################################################################################################
+####################################### Run WGS Pipeline #######################################
+################################################################################################
+
+rule run_biss_pipeline:
+    input:
+        input_dir=config["input_dir"],
+    output:
+        touch("logs/{sample}.biss_pipeline.done")
+    threads: config.get("threads") or 24
+    params:
+        outdir=OUTDIR,
+        reference=config["reference"] or "",
+        base=config["base"] or "",
+        gatk=config["gatk"] or "",
+        adapter1=config["adapter1"] or "",
+        adapter2=config["adapter2"] or "",
+        trim_q=config["trim_q"] or "",
+        trim_l=config["trim_l"] or "",
+        trim_n=config["trim_n"] or "",
+        n_aln=config["n_aln"] or "",
+        snps=config["snps"] or "",
+        rdupli=config.get("rdupli", False),
+        bwa_aln=config.get("bwa_aln", False),
+        fastq=config.get("fastq", False),
+        force=config.get("force", False),
+        pcr=config.get("pcr", False),
+        debug=config.get("debug", False),
+        no_collapse=config.get("no_collapse", False)
+    shell:
+        """
+        biss_bwa_pipeline_v1.4_rocky \
+            --input {input.input_dir} \
+            --out {params.outdir} \
+            {('--reference ' + params.reference) if params.reference else ''} \
+            {('--base ' + params.base) if params.base else ''} \
+            {('--gatk ' + params.gatk) if params.gatk else ''} \
+            {('--adapter1 ' + params.adapter1) if params.adapter1 else ''} \
+            {('--adapter2 ' + params.adapter2) if params.adapter2 else ''} \
+            {('--trim_q ' + str(params.trim_q)) if params.trim_q else ''} \
+            {('--trim_l ' + str(params.trim_l)) if params.trim_l else ''} \
+            {('--trim_n ' + str(params.trim_n)) if params.trim_n else ''} \
+            {('--n_aln ' + str(params.n_aln)) if params.n_aln else ''} \
+            {('--snps ' + params.snps) if params.snps else ''} \
+            {('--threads ' + str(threads)) if threads else ''} \
+            {"--rdupli" if params.rdupli else ''} \
+            {"--bwa_aln" if params.bwa_aln else ''} \
+            {"--fastq" if params.fastq else ''} \
+            {"--force" if params.force else ''} \
+            {"--pcr" if params.pcr else ''} \
+            {"--debug" if params.debug else ''} \
+            {"--no_collapse" if params.no_collapse else ''}
+        """
+
+################################################################################################
+####################################### Get EMPOP input ########################################
+################################################################################################
+
+mt_cov_threshold = config.get("mt_cov_threshold", 100)
+
+# Get the mt EMPOP input file
+if config.get("get_empop_input", False):
+    rule get_empop_input:
+        input:
+            vcf = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.all_SNPs.vcf"
+        output:
+            mt_vcf = OUTDIR + "/{sample}/{sample}.mt_SNPs.vcf",
+            empop = OUTDIR + f"/{{sample}}/{{sample}}.chrM_{mt_cov_threshold}.EMPOP.txt"
+        shell:
+            """
+            grep -E '^#|chrM' {input.vcf} > {output.mt_vcf}
+            grep -v '^#' {output.mt_vcf} | awk 'length($4)==1 && length($5)==1 {{dp=0; split($8,info,";"); for(i in info){{if(info[i] ~ /^DP=/){{split(info[i],a,"="); dp=a[2]}}}} if(dp>{mt_cov_threshold}){{print $2 $5}}}}' > {output.empop}
+            """
+
+
+################################################################################################
+############################################ Yleaf #############################################
+################################################################################################
+
+# https://github.com/genid/Yleaf 
+
+if config.get("run_yleaf", False):
+    rule yleaf:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam"
+        output:
+            touch(f"{OUTDIR}/{{sample}}/yleaf_output/yleaf.done")
+        params:
+            treshold = config.get("reads_treshold", 8),
+            outdir = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/yleaf_output"
+        shell:
+            """
+            Yleaf_v3.2.1 -bam {input.bam} --reads_treshold {params.treshold} --reference_genome hg38 -o {params.outdir}
+            """
+
+
+
+################################################################################################
+############################################ AIMs ##############################################
+################################################################################################
+if config.get("extract_AIMs", False):
+    rule extract_AIMs:
+        input:
+            vcf = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.all_SNPs.vcf"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.AIMs.vcf"
+        shell:
+            "biss_vcf_to_ref_v2.0 -i {input.vcf} -o {output} -d 1 -g 1"
+
+
+
+################################################################################################
+######################################### HIrisPlex-S ##########################################
+################################################################################################
+
+# To get the output for: https://hirisplex.erasmusmc.nl/ to get HIrisPlex-S predictions.
+
+########################################## IMPORTANT! ##########################################
+# I did not manage to finish setting up the R code to run here - Aleks
+# It is however possible to run it manually on your own and can be found here:
+# /mnt/ngs/projects/wgs_pipeline_testing_6180/users/wmj412/20250523_summary_script_pipeline/Assign_Genotypes_HIrisplexS
+################################################################################################
+
+rule extract_HIrisPlexS:
+    input:
+        vcf = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.all_SNPs.vcf",
+    output:
+        csv = OUTDIR + "/{sample}/{sample}.HIrisPlexS.csv",
+    shell:
+        """
+        Rscript process_vcf.R {input.vcf} {output.csv}
+        """
+
+
+################################################################################################
+############################################# STRs #############################################
+################################################################################################
+
+# https://bitbucket.org/rirgabiss/strinngs/src/master/
+
+############################################ NOTE! #############################################
+# Here we use: "merged.sorted.markDup.sorted.bam" and NOT "merged.sorted.markDup.sorted.recalibrated.bam"
+#
+# This is because the index file for the latter is not named "bam.bai" but simply "bai" — which STRinNGS cannot handle.
+# The way the index name for "merged.sorted.markDup.sorted.recalibrated.bam" is generated needs to be changed
+# if it is important that the same BAM file is used in all analyses!
+################################################################################################
+
+
+if config.get("extract_STRs", False):
+    rule extract_STRs:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.bam"
+        output:
+            outdir = directory(f"{OUTDIR}/{{sample}}/strinngs_output")
+        params:
+            ref = "/mnt/ngs/ref_db/homo_sapiens/whole_genome/hg38-GCA_000001405.15_GRCh38_no_alt_analysis_set.fa",
+            ini = config.get("ini_file", "")
+        shell:
+            """
+            STRinNGS_v2.1_rocky -i {input.bam} -o {output.outdir} -r {params.ref} -n {params.ini}
+            """
+
+
+
+################################################################################################
+###################################### mapDamage analysis ######################################
+################################################################################################
+
+# Will output a directory called "mapdamage_outut" inside of the sample specific directory.
+# No options are added! For options see: mapDamage -h
+
+########################################## IMPORTANT! ##########################################
+# Can ONLY run on ngs01 for now. To be able to run it you have to change your .bashrc accordingly:
+
+## First open a terminal on one of the linux servers.
+
+### Then make a backup of your old .bashrc (there is a space before each ~):
+### mv ~/.bashrc ~/.bashrc_old
+
+## Then copy the new one instead (two spaces in all):
+#### cp /mnt/ngs/biss/opt/recommended_configs/.bashrc ~/.bashrc
+
+## Close the terminal and open a new terminal to activate the bashrc.
+################################################################################################
+
+# More information:
+# https://ginolhac.github.io/mapDamage/
+
+if config.get("run_mapdamage", False):
+    rule run_mapdamage:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam",
+            ref = "/mnt/ngs/ref_db/homo_sapiens/whole_genome/hg38-GCA_000001405.15_GRCh38_no_alt_analysis_set.fa"
+        output:
+            touch(f"{OUTDIR}/{{sample}}/mapdamage_output/mapdamage.done")
+        params:
+            outdir = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/mapdamage_output"
+        shell:
+            """
+            mkdir -p {params.outdir}
+            mapDamage -i {input.bam} -r {input.ref} -d {params.outdir}
+            """
+
+
+################################################################################################
+###################################### Library Complexity ######################################
+################################################################################################
+
+# An option:
+# https://gatk.broadinstitute.org/hc/en-us/articles/360037591931-EstimateLibraryComplexity-Picard
+
+if config.get("library_complexity_picard", False):
+    rule library_complexity:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam",
+            ref = "/mnt/ngs/ref_db/homo_sapiens/whole_genome/hg38-GCA_000001405.15_GRCh38_no_alt_analysis_set.fa"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.lib_complexity_picard.txt"
+        shell:
+            "java -jar picard.jar EstimateLibraryComplexity I={input.bam} O={output}"
+
+
+
+# Another option (what nf/core-eager runs):
+# https://github.com/smithlabcode/preseq
+if config.get("library_complexity_preseq", False):
+    rule library_complexity:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.preseq_yield_estimates.txt"
+        shell:
+            "preseq lc_extrap -B -o {output} {input.bam}"
+
+
+
+# Third option (custom script based on the PCR output):
+
+if config.get("library_complexity_custom", False):
+    rule library_complexity:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam"        
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.custom_yield_estimates.txt"
+        shell:
+            "custom script"
+
+
+################################################################################################
+###################################### Sex Determination #######################################
+################################################################################################
+
+########################################## Skoglund ############################################
+# https://github.com/pontussk/ry_compute/blob/master/ry_compute.py
+
+if config.get("sex_determination_skoglund", False):
+    rule sex_determination_skoglund:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam",
+            python_script = "/mnt/ngs/projects/wgs_pipeline_testing_6180/users/gmv161/Hair/Sex_determination/methods/Skoglund/ry_compute.py"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.skoglund_sex_det.txt"
+        shell:
+            "samtools-1.18-rocky view -q 30 {input.bam} | python2 {input.python_script} > {output}"
+
+######################################## Anastasiadou ##########################################
+# https://github.com/kyriaki-anast/karyo_RxRy
+
+if config.get("sex_determination_anastasiadou", False):
+    rule sex_determination_anastasiadou:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam",
+            python_script = "/mnt/ngs/projects/wgs_pipeline_testing_6180/users/gmv161/Hair/Sex_determination/methods/Anastasiadou/karyo_RxRy_script.py"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.anastasiadou_sex_det.txt"
+        shell:
+            "samtools-1.18-rocky view -q 30 {input.bam} | python2 {input.python_script} > {output}"
+
+
+################################################################################################
+########################################## Demixtify ###########################################
+################################################################################################
+# https://github.com/Ahhgust/Demixtify
+
+
+########################################## IMPORTANT! ##########################################
+# Currently cannot get Demixtify to work (it's not installed on the server yet!)
+################################################################################################
+
+if config.get("run_demixtify", False):
+    rule run_demixtify:
+        input:
+            bam = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.merged.sorted.markDup.sorted.recalibrated.bam",
+            vcf = lambda wildcards: f"{SAMPLE_OUTDIRS[wildcards.sample]}/{wildcards.sample}.sites2include.vcf"
+        output:
+            f"{OUTDIR}/{{sample}}/{{sample}}.demixtify.tsv"
+        shell:
+            "demix -v {input.vcf} -b {input.bam} > {output}"
+
+
+################################################################################################
+############################################# FIN ##############################################
+################################################################################################
