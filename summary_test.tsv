@@ -1,3 +1,0 @@
-Sample	Reads Lane 1	Reads Lane 2	Total Raw Reads	Mapped Reads	% Mapped	Discarded Reads	Average Length	Depth of Coverage	Breadth of Coverage	mtDNA reads	Depth of Coverage for mtDNA	Breadth of Coverage for mtDNA	Mitochondrial to Nuclear Read Ratio	Mean Insert Size	Duplicated Reads	Duplication Rate
-8A-D2-SS-root	91903316	93058598	369923828	154645620	41.80	215278208	72.26	1.68	44.34	32823	284.05	100.00	0.0002	5679.91	72651369	46.98
-8B-D2-SS-root	80184269	81395816	323160170	136146028	42.13	187014142	81.01	1.41	37.22	40752	361.19	100.00	0.0003	3345.35	74623833	54.81
